@@ -9,6 +9,8 @@ import {
 } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import i18n from "../i18n";
+import { isAndroid } from "../android/bridge";
+import { AndroidPlayerButton } from "../android/AndroidMedia";
 import {
   EPISODE_GROUP_IDS,
   applyEpisodeMapping,
@@ -488,7 +490,7 @@ export default function TVPage({
   const srcId = useSourceId(playerSource, "tv", item.id, apiKey);
   // Re-show the loading overlay once a resolved IMDb id swaps in the real URL
   useEffect(() => {
-    if (srcId.id && playing) setWebviewLoading(true);
+    if (!isAndroid && srcId.id && playing) setWebviewLoading(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srcId.id]);
   const [playerFullscreen, setPlayerFullscreen] = useState(false);
@@ -712,7 +714,7 @@ export default function TVPage({
     resolvingUrlRef.current = false;
     setResolvingUrl(false);
     setResolveError(null);
-    setWebviewLoading(true); // instantly blank the player on every source/episode switch
+    if (!isAndroid) setWebviewLoading(true);
   }, [
     item.id,
     selectedEp?.episode_number,
@@ -869,7 +871,7 @@ export default function TVPage({
   }, [playing, selectedEp, playerSource, selectedSeason, dubMode]);
 
   useEffect(() => {
-    if (!window.electron) return;
+    if (!window.electron?.onM3u8Found) return;
     const handler = window.electron.onM3u8Found((url) => {
       setM3u8Url((prev) => (prev !== url ? url : prev));
     });
@@ -897,7 +899,7 @@ export default function TVPage({
   }, [showSourceMenu]);
 
   useEffect(() => {
-    if (!window.electron) return;
+    if (!window.electron?.onSubtitleFound) return;
     const handler = window.electron.onSubtitleFound(({ url, lang }) => {
       if (!url || !url.toLowerCase().includes(".vtt")) return;
       setInterceptedSubs((prev) => {
@@ -1245,7 +1247,9 @@ export default function TVPage({
 
   // Show loader instantly when playback starts
   useEffect(() => {
-    if (playing) setWebviewLoading(true);
+    if (!playing) return;
+    if (isAndroid) playerWrapRef.current?.scrollIntoView({ block: "start" });
+    else setWebviewLoading(true);
   }, [playing]);
 
   // ── Webview memory cleanup ────────────────────────────────────────────────
@@ -1850,7 +1854,9 @@ export default function TVPage({
                     ) : (
                       <button
                         className="btn btn-secondary"
-                        onClick={() => setShowTrailer(true)}
+                        onClick={() => isAndroid
+                          ? window.electron.openExternal(`https://www.youtube.com/watch?v=${encodeURIComponent(trailerKey)}`)
+                          : setShowTrailer(true)}
                       >
                         <TrailerIcon /> {t("tv.trailer")}
                       </button>
@@ -1915,7 +1921,7 @@ export default function TVPage({
                 ref={playerWrapRef}
               >
                 {/* Universal source-loading overlay, shown instantly on every source/episode switch */}
-                {webviewLoading && !resolveError && (
+                {!isAndroid && webviewLoading && !resolveError && (
                   <div
                     style={{
                       position: "absolute",
@@ -2227,7 +2233,10 @@ export default function TVPage({
                     </div>
                   </div>
                 )}
-                <webview
+                {isAndroid ? (
+                  <AndroidPlayerButton url={playerDirectUrl} title={title}
+                    progressKey={currentProgressKey} saveProgress={saveProgress} />
+                ) : <webview
                   ref={webviewRef}
                   // A fresh guest per UA mode: loadURL's userAgent override sticks
                   // to the WebContents, so it can't be unset on a reused webview.
@@ -2264,7 +2273,7 @@ export default function TVPage({
                         : "visible",
                   }}
                   tabIndex={-1}
-                />
+                />}
                 {/* Left-side overlay button group, flex row, no fixed px offsets */}
                 <div className="player-overlay-group">
                   <button
@@ -2306,7 +2315,7 @@ export default function TVPage({
                   )}
                   {/* Blocked ads & trackers button */}
                   <button
-                    className="player-overlay-btn"
+                    className="player-overlay-btn desktop-player-action"
                     onClick={() => {
                       setShowSourceMenu(false);
                       setShowBlockedModal(true);
@@ -2322,7 +2331,7 @@ export default function TVPage({
                   </button>
                   {/* Pop-out button */}
                   <button
-                    className="player-overlay-btn"
+                    className="player-overlay-btn desktop-player-action"
                     onClick={() => {
                       if (pipOpen) {
                         window.electron?.closePipWindow?.();
@@ -2402,7 +2411,7 @@ export default function TVPage({
                   </div>
                 )}
                 <button
-                  className="player-overlay-btn"
+                  className="player-overlay-btn desktop-player-action"
                   onClick={() =>
                     currentEpDownload
                       ? onGoToDownloads?.(currentEpDownload.id)

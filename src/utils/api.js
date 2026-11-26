@@ -1,3 +1,5 @@
+import { androidRequest, isAndroid } from "../android/bridge";
+
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const IMG_BASE = "https://image.tmdb.org/t/p";
 
@@ -69,6 +71,17 @@ function _releaseSlot() {
   }
 }
 
+export async function tmdbRequest(path, apiKey, signal) {
+  if (isAndroid) {
+    const { status, body } = await androidRequest("tmdb", { path, token: apiKey });
+    return { status, ok: status >= 200 && status < 300, json: async () => body };
+  }
+  return fetch(`${TMDB_BASE}${path}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal,
+  });
+}
+
 export const tmdbFetch = async (path, apiKey) => {
   const localizedPath = withLanguage(path);
   const cacheKey = `${apiKey}|${localizedPath}`;
@@ -79,9 +92,7 @@ export const tmdbFetch = async (path, apiKey) => {
 
   let res;
   try {
-    res = await fetch(`${TMDB_BASE}${localizedPath}`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
+    res = await tmdbRequest(localizedPath, apiKey);
   } catch {
     _releaseSlot();
     _onUnreachable?.();
@@ -133,7 +144,7 @@ export const tmdbFetch = async (path, apiKey) => {
 //                   (default Electron UA minus the "Electron/x.y.z" and app
 //                   tokens). Omit/false = Electron's untouched default UA.
 //
-export const PLAYER_SOURCES = [
+const ALL_PLAYER_SOURCES = [
   {
     id: "vidsrc",
     label: "VidSrc",
@@ -298,6 +309,10 @@ export const PLAYER_SOURCES = [
 
 // Sources that require a transparent webRequest intercept to load properly
 export const NEEDS_INTERCEPT = ["vidsrc", "devideosrc", "frembed", "kinohub"];
+
+export const PLAYER_SOURCES = isAndroid
+  ? ALL_PLAYER_SOURCES.filter(({ id, async }) => !async && !NEEDS_INTERCEPT.includes(id))
+  : ALL_PLAYER_SOURCES;
 
 export const getSourceUrl = (
   sourceId,
@@ -723,7 +738,7 @@ export const isAnimeContent = (item, details) => {
 };
 
 // Default sources
-export const ANIME_DEFAULT_SOURCE = "hianime";
+export const ANIME_DEFAULT_SOURCE = isAndroid ? "vidnest" : "hianime";
 export const NON_ANIME_DEFAULT_SOURCE = "vidrift";
 
 // ── Episode Group fetch (localStorage + in-memory cache, 7-day TTL) ─────────

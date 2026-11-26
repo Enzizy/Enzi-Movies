@@ -1,3 +1,9 @@
+# Enzi Movies
+
+Enzi Movies is a Rust-powered Android port of Streambert. It supports the TMDB catalog, local video playback, direct MP4 and HLS streams, and direct-file downloads. See the [Android setup and build instructions](android/README.md).
+
+## Upstream desktop project
+
 [![Downloads@latest](https://img.shields.io/github/downloads/truelockmc/streambert/latest/total?style=for-the-badge)](https://codeberg.org/truelockmc/streambert/releases/latest/)
 [![Release Version Badge](https://img.shields.io/github/v/release/truelockmc/streambert?style=for-the-badge)](https://github.com/truelockmc/streambert/releases)
 [![Issues Badge](https://img.shields.io/github/issues/truelockmc/streambert?style=for-the-badge)](https://github.com/truelockmc/streambert/issues)
@@ -6,7 +12,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-truelockmc%2Fstreambert-181717?style=for-the-badge&logo=github)](https://github.com/truelockmc/streambert)
 [![Codeberg](https://img.shields.io/badge/Codeberg-truelockmc%2Fstreambert-2185D0?style=for-the-badge&logo=codeberg)](https://codeberg.org/truelockmc/streambert)
 [![AUR Version](https://img.shields.io/aur/version/streambert-bin?style=for-the-badge&logo=archlinux)](https://aur.archlinux.org/packages/streambert-bin)
-# Streambert
+### Streambert
 A cross-platform Electron Desktop App to stream and download any Movie, TV Series or Anime in the World. Zero Ads and Tracking[*](#privacy-disclaimer) <br></br>
 <a href="https://trendshift.io/repositories/31115" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/31115" alt="truelockmc%2Fstreambert | Trendshift" width="250" height="55"/></a>
 
@@ -89,6 +95,8 @@ Download the latest `Streambert-*-universal.dmg` from the [Releases](https://cod
 
 
 ## Building from Source
+
+For the Android port, see the [Android build instructions](android/README.md).
 1. Install dependencies:
 ```bash
 npm install

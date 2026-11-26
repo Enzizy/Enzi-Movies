@@ -19,7 +19,9 @@ import {
   ACCENT_PRESETS,
 } from "./utils/appearance";
 import { collectBackupData } from "./utils/backup";
-import { tmdbFetch, setApiErrorHandlers, imgUrl } from "./utils/api";
+import { tmdbFetch, tmdbRequest, setApiErrorHandlers, imgUrl } from "./utils/api";
+import { isAndroid } from "./android/bridge";
+import { AndroidMedia, AndroidSettings } from "./android/AndroidMedia";
 import { clearAppCaches } from "./utils/storage";
 import {
   readDiscordRpcSettings,
@@ -53,9 +55,9 @@ export default function App() {
   // apiKey loaded async from secure storage (OS keychain)
   const [apiKey, setApiKey] = useState(null);
   const [apiKeyLoaded, setApiKeyLoaded] = useState(false);
-  const [skipped, setSkipped] = useState(false);
+  const [skipped, setSkipped] = useState(() => isAndroid && storage.get("androidSkipSetup") === true);
   const [apiKeyStatus, setApiKeyStatus] = useState("checking"); // 'checking' | 'ok' | 'invalid_token' | 'unreachable'
-  const [page, setPage] = useState(() => storage.get("startPage") || "home");
+  const [page, setPage] = useState(() => skipped ? "downloads" : storage.get("startPage") || "home");
   const [selected, setSelected] = useState(null);
   const [showSearch, setShowSearch] = useState(false);
   const [dlSearchOpen, setDlSearchOpen] = useState(false);
@@ -347,7 +349,7 @@ export default function App() {
   // ── Load API key from secure storage on startup ──
   useEffect(() => {
     let mounted = true;
-    secureStorage.get("apikey").then((val) => {
+    secureStorage.get("apikey").catch(() => null).then((val) => {
       if (!mounted) return;
       setApiKey(val || null);
       setApiKeyLoaded(true);
@@ -375,7 +377,7 @@ export default function App() {
 
   // Listen for close confirmation request from main process
   useEffect(() => {
-    if (!window.electron) return;
+    if (!window.electron?.onConfirmClose) return;
     const handler = window.electron.onConfirmClose((data) =>
       setCloseConfirm(data),
     );
@@ -399,17 +401,15 @@ export default function App() {
     }
     setApiKeyStatus("checking");
     const controller = new AbortController();
-    fetch("https://api.themoviedb.org/3/configuration", {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: controller.signal,
-    })
+    tmdbRequest("/configuration", apiKey, controller.signal)
       .then((res) => {
+        if (controller.signal.aborted) return;
         if (res.status === 401 || res.status === 403)
           setApiKeyStatus("invalid_token");
         else setApiKeyStatus("ok");
       })
       .catch((err) => {
-        if (err.name === "AbortError") return;
+        if (controller.signal.aborted || err.name === "AbortError") return;
         setApiKeyStatus("unreachable");
       });
     return () => controller.abort();
@@ -417,7 +417,7 @@ export default function App() {
 
   // Load persisted downloads on startup + immediately prune missing files
   useEffect(() => {
-    if (!window.electron) return;
+    if (!window.electron?.getDownloads) return;
     let mounted = true;
     window.electron.getDownloads().then(async (list) => {
       if (!mounted || !Array.isArray(list)) return;
@@ -455,7 +455,7 @@ export default function App() {
 
   // Listen for live progress events from main process
   useEffect(() => {
-    if (!window.electron) return;
+    if (!window.electron?.onDownloadProgress) return;
     const handler = window.electron.onDownloadProgress((update) => {
       // ── Desktop notification ──────────────────────
       if (
@@ -683,6 +683,20 @@ export default function App() {
     });
   }, []);
 
+  useEffect(() => {
+    if (!isAndroid) return;
+    window.streambertBack = () => {
+      if (showSearch) {
+        setShowSearch(false);
+        return true;
+      }
+      if (!navStack.length) return false;
+      navigateBack();
+      return true;
+    };
+    return () => { delete window.streambertBack; };
+  }, [navigateBack, navStack.length, showSearch]);
+
   const navigate = useCallback((pg, data = null) => {
     setNavStack((prev) => [
       ...prev,
@@ -787,13 +801,15 @@ export default function App() {
     [navigate],
   );
 
-  const saveApiKey = useCallback((key) => {
-    secureStorage.set("apikey", key);
+  const saveApiKey = useCallback(async (key) => {
+    await secureStorage.set("apikey", key);
+    if (isAndroid) storage.remove("androidSkipSetup");
     setApiKey(key);
   }, []);
 
   const changeApiKey = useCallback(() => {
     secureStorage.set("apikey", "");
+    if (isAndroid) storage.remove("androidSkipSetup");
     setApiKey(null);
     setApiKeyLoaded(true);
     setSkipped(false);
@@ -996,7 +1012,13 @@ export default function App() {
 
   if (!apiKeyLoaded) return null; // wait for secure storage to resolve
   if (!apiKey && !skipped)
-    return <SetupScreen onSave={saveApiKey} onSkip={() => setSkipped(true)} />;
+    return <SetupScreen onSave={saveApiKey} onSkip={() => {
+      setSkipped(true);
+      if (isAndroid) {
+        storage.set("androidSkipSetup", true);
+        setPage("downloads");
+      }
+    }} />;
 
   const hasCustomTitlebar = platform === "win32" || platform === "linux";
 
@@ -1131,14 +1153,16 @@ export default function App() {
                 onRemoveHistory={removeHistory}
               />
             )}
-            {page === "settings" && (
+            {page === "settings" && (isAndroid ? (
+              <AndroidSettings apiKey={apiKey} onChangeApiKey={changeApiKey} />
+            ) : (
               <SettingsPage
                 apiKey={apiKey}
                 onChangeApiKey={changeApiKey}
                 initialSection={selected?.section}
               />
-            )}
-            {page === "downloads" && (
+            ))}
+            {page === "downloads" && (isAndroid ? <AndroidMedia /> : (
               <DownloadsPage
                 downloads={downloads}
                 onDeleteDownload={handleDeleteDownload}
@@ -1162,7 +1186,7 @@ export default function App() {
                   )
                 }
               />
-            )}
+            ))}
           </Suspense>
         </div>
 

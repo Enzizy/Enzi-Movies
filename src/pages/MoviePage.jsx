@@ -77,6 +77,8 @@ import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
 import HiAnimeLoader from "../components/HiAnimeLoader";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
+import { isAndroid } from "../android/bridge";
+import { AndroidPlayerButton } from "../android/AndroidMedia";
 
 export default function MoviePage({
   item,
@@ -149,7 +151,7 @@ export default function MoviePage({
   const srcId = useSourceId(playerSource, "movie", item.id, apiKey);
   // Re-show the loading overlay once a resolved IMDb id swaps in the real URL
   useEffect(() => {
-    if (srcId.id && playing) setWebviewLoading(true);
+    if (!isAndroid && srcId.id && playing) setWebviewLoading(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srcId.id]);
   const [playerFullscreen, setPlayerFullscreen] = useState(false);
@@ -340,7 +342,7 @@ export default function MoviePage({
     resolvingUrlRef.current = false;
     setResolvingUrl(false);
     setResolveError(null);
-    setWebviewLoading(true); // instantly blank the player on every source/item switch
+    if (!isAndroid) setWebviewLoading(true);
   }, [item.id, playerSource, dubMode]);
 
   // Fetch AniList data + auto-set source for anime/non-anime
@@ -469,7 +471,7 @@ export default function MoviePage({
   }, [playing, playerSource, dubMode]);
 
   useEffect(() => {
-    if (!window.electron) return;
+    if (!window.electron?.onM3u8Found) return;
     const handler = window.electron.onM3u8Found((url) => {
       setM3u8Url((prev) => (prev !== url ? url : prev));
     });
@@ -497,7 +499,7 @@ export default function MoviePage({
   }, [showSourceMenu]);
 
   useEffect(() => {
-    if (!window.electron) return;
+    if (!window.electron?.onSubtitleFound) return;
     const handler = window.electron.onSubtitleFound(({ url, lang }) => {
       // Only keep VTT, deduplicate per language (latest wins)
       if (!url || !url.toLowerCase().includes(".vtt")) return;
@@ -516,9 +518,10 @@ export default function MoviePage({
     seekBackCooldownRef.current = 0;
   }, [item.id, isWatched]);
 
-  // Show loader instantly when play starts
   useEffect(() => {
-    if (playing) setWebviewLoading(true);
+    if (!playing) return;
+    if (isAndroid) playerWrapRef.current?.scrollIntoView({ block: "start" });
+    else setWebviewLoading(true);
   }, [playing]);
 
   // ── Webview memory cleanup ────────────────────────────────────────────────
@@ -926,7 +929,9 @@ export default function MoviePage({
                 ) : (
                   <button
                     className="btn btn-secondary"
-                    onClick={() => setShowTrailer(true)}
+                    onClick={() => isAndroid
+                      ? window.electron.openExternal(`https://www.youtube.com/watch?v=${encodeURIComponent(trailerKey)}`)
+                      : setShowTrailer(true)}
                   >
                     <TrailerIcon /> {t("movie.trailer")}
                   </button>
@@ -986,7 +991,7 @@ export default function MoviePage({
             ref={playerWrapRef}
           >
             {/* Universal source-loading overlay, shown instantly on every source/item switch */}
-            {webviewLoading && !resolveError && (
+            {!isAndroid && webviewLoading && !resolveError && (
               <div
                 style={{
                   position: "absolute",
@@ -1118,7 +1123,10 @@ export default function MoviePage({
                 </button>
               </div>
             )}
-            <webview
+            {isAndroid ? (
+              <AndroidPlayerButton url={playerDirectUrl} title={title}
+                progressKey={progressKey} saveProgress={saveProgress} />
+            ) : <webview
               ref={webviewRef}
               // A fresh guest per UA mode: loadURL's userAgent override sticks
               // to the WebContents, so it can't be unset on a reused webview.
@@ -1148,7 +1156,7 @@ export default function MoviePage({
                     ? "hidden"
                     : "visible",
               }}
-            />
+            />}
             {/* Left-side overlay button group, flex row, no fixed px offsets */}
             <div className="player-overlay-group">
               <button
@@ -1190,7 +1198,7 @@ export default function MoviePage({
               )}
               {/* Blocked ads & trackers button */}
               <button
-                className="player-overlay-btn"
+                className="player-overlay-btn desktop-player-action"
                 onClick={() => {
                   setShowSourceMenu(false);
                   setShowBlockedModal(true);
@@ -1204,7 +1212,7 @@ export default function MoviePage({
               </button>
               {/* Pop-out button*/}
               <button
-                className="player-overlay-btn"
+                className="player-overlay-btn desktop-player-action"
                 onClick={() => {
                   if (pipOpen) {
                     window.electron?.closePipWindow?.();
@@ -1275,7 +1283,7 @@ export default function MoviePage({
               </div>
             )}
             <button
-              className="player-overlay-btn"
+              className="player-overlay-btn desktop-player-action"
               onClick={() =>
                 movieDownload
                   ? onGoToDownloads?.(movieDownload.id)

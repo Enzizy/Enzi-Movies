@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { imgUrl } from "../utils/api";
 import { useSeasonalEvent } from "../components/seasonalEvents.jsx";
+import { isAndroid } from "../android/bridge";
+import { appName } from "../utils/branding";
 import {
-  StreambertLogo,
+  AppLogo,
   HomeIcon,
   SearchIcon,
   HistoryIcon,
@@ -105,18 +107,18 @@ export default function Sidebar({
       <div
         className="sidebar-logo"
         onClick={() => onNavigate("home")}
-        title="Streambert"
+        title={appName}
         style={{ position: "relative" }}
       >
-        <StreambertLogo />
+        <AppLogo />
         {seasonalEvent && seasonalEvent.render()}
       </div>
 
       {canGoBack && (
-        <SideBtn onClick={onBack} icon={<BackIcon />} label="Back (Ctrl+Z)" />
+        <SideBtn onClick={onBack} icon={<BackIcon />} label={isAndroid ? "Back" : "Back (Ctrl+Z)"} />
       )}
 
-      <SideBtn onClick={onSearch} icon={<SearchIcon />} label="Search  (⌘F)" />
+      <SideBtn onClick={onSearch} icon={<SearchIcon />} label={isAndroid ? "Search" : "Search  (⌘F)"} />
       <SideBtn
         active={page === "home"}
         onClick={() => onNavigate("home")}
@@ -217,18 +219,18 @@ export default function Sidebar({
       )}
 
       <div className="sidebar-bottom">
-        <SideBtn
+        {!isAndroid && <SideBtn
           onClick={onShowShortcuts}
           icon={<HelpIcon />}
           label="Help & Shortcuts (?)"
-        />
+        />}
         <SideBtn
           active={page === "settings"}
           onClick={() => onNavigate("settings")}
           icon={<SettingsIcon />}
           label="Settings"
         />
-        <button
+        {!isAndroid && <button
           className="sidebar-btn"
           onClick={() => window.electron?.quitApp?.()}
           title="Quit App"
@@ -236,7 +238,7 @@ export default function Sidebar({
         >
           <QuitIcon />
           <span className="tooltip">Quit App</span>
-        </button>
+        </button>}
       </div>
     </div>
   );
@@ -247,6 +249,7 @@ function SideBtn({ active, onClick, icon, label, badge }) {
     <button
       className={`sidebar-btn ${active ? "active" : ""}`}
       onClick={onClick}
+      aria-label={label}
       style={{ position: "relative" }}
     >
       {icon}

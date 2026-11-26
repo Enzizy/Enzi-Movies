@@ -1,7 +1,9 @@
-export const StreambertLogo = ({ style }) => (
+import { appIcon, appName } from "../utils/branding";
+
+export const AppLogo = ({ style }) => (
   <img
-    src="./logo.svg"
-    alt="Streambert"
+    src={appIcon}
+    alt={appName}
     width="44"
     height="44"
     style={{ width: "100%", height: "100%", display: "block", ...style }}

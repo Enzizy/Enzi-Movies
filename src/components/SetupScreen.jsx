@@ -1,15 +1,13 @@
 import { useState, useEffect, useRef } from "react";
-import { StreambertLogo, PlayIcon } from "./Icons";
-
-const TMDB_BASE = "https://api.themoviedb.org/3";
+import { AppLogo, PlayIcon } from "./Icons";
+import { tmdbRequest } from "../utils/api";
+import { isAndroid } from "../android/bridge";
+import { appName } from "../utils/branding";
 
 async function validateToken(token) {
   // Step 1: Can we reach TMDB at all?
   try {
-    const pingRes = await fetch(`${TMDB_BASE}/configuration`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(7000),
-    });
+    const pingRes = await tmdbRequest("/configuration", token, AbortSignal.timeout?.(7000));
 
     // TMDB is reachable — now check the response
     if (pingRes.status === 401) {
@@ -23,10 +21,7 @@ async function validateToken(token) {
     }
 
     // Step 2: Run a real content request to confirm full API access
-    const testRes = await fetch(`${TMDB_BASE}/trending/movie/week`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(7000),
-    });
+    const testRes = await tmdbRequest("/trending/movie/week", token, AbortSignal.timeout?.(7000));
     if (!testRes.ok) {
       return { ok: false, reason: "api_error", status: testRes.status };
     }
@@ -94,6 +89,7 @@ export default function SetupScreen({ onSave, onSkip }) {
   const [focused, setFocused] = useState(false);
 
   useEffect(() => {
+    if (isAndroid) return;
     const t = setTimeout(() => {
       window.focus();
       inputRef.current?.focus();
@@ -109,7 +105,11 @@ export default function SetupScreen({ onSave, onSkip }) {
     const result = await validateToken(token);
     setChecking(false);
     if (result.ok) {
-      onSave(token);
+      try {
+        await onSave(token);
+      } catch {
+        setError({ title: "Could not save token", body: "Try again to save it on this device." });
+      }
     } else {
       setError(errorMessage(result.reason, result.status));
     }
@@ -119,9 +119,9 @@ export default function SetupScreen({ onSave, onSkip }) {
     <div className="apikey-modal">
       <div className="apikey-box">
         <div className="apikey-logo">
-          <StreambertLogo />
+          <AppLogo />
         </div>
-        <div className="apikey-title">STREAMBERT</div>
+        <div className="apikey-title">{isAndroid ? appName : "STREAMBERT"}</div>
         <p className="apikey-sub">
           Enter your <strong>free</strong> TMDB{" "}
           <strong>Read Access Token</strong> to get started.
@@ -146,6 +146,9 @@ export default function SetupScreen({ onSave, onSkip }) {
         <input
           className={`apikey-input${error ? " apikey-input-error" : ""}`}
           placeholder="Paste your TMDB Read Access Token (eyJ...)..."
+          aria-label="TMDB Read Access Token"
+          type={isAndroid ? "password" : "text"}
+          autoComplete="off"
           value={key}
           onChange={(e) => {
             setKey(e.target.value);
@@ -208,7 +211,7 @@ export default function SetupScreen({ onSave, onSkip }) {
             onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text2)")}
             onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text3)")}
           >
-            Skip for now
+            {isAndroid ? "Use media links or local videos" : "Skip for now"}
           </button>
         )}
       </div>

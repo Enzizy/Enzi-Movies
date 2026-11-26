@@ -1,0 +1,108 @@
+plugins {
+    id 'com.android.application' version '8.13.1'
+}
+
+def repository = rootProject.projectDir.parentFile
+def desktopManifest = new groovy.json.JsonSlurper().parse(new File(repository, 'package.json'))
+def rustProject = rootProject.file('rust')
+def minimumApi = 24
+def webOutput = layout.buildDirectory.dir('generated/streambert/web')
+def jniOutput = layout.buildDirectory.dir('generated/streambert/jni')
+def osName = System.getProperty('os.name').toLowerCase(Locale.ROOT)
+def windows = osName.startsWith('windows')
+def targetsByAbi = [
+    'arm64-v8a': ['aarch64-linux-android', 'aarch64-linux-android'],
+    'armeabi-v7a': ['armv7-linux-androideabi', 'armv7a-linux-androideabi'],
+    'x86_64': ['x86_64-linux-android', 'x86_64-linux-android']
+]
+def packageAbis = providers.gradleProperty('streambertAbis')
+    .map { it.split(',').collect { name -> name.trim() } }
+    .getOrElse(targetsByAbi.keySet().toList())
+if (!targetsByAbi.keySet().containsAll(packageAbis)) {
+    throw new GradleException("Unsupported Android ABI: ${packageAbis}")
+}
+
+android {
+    namespace 'com.truelockmc.streambert'
+    compileSdk 36
+    ndkVersion '28.2.13676358'
+
+    defaultConfig {
+        applicationId 'com.truelockmc.streambert'
+        minSdk minimumApi
+        targetSdk 35
+        versionCode 2
+        versionName desktopManifest.version + '-android.2'
+        ndk.abiFilters.addAll(packageAbis)
+    }
+
+    buildFeatures { buildConfig true }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    sourceSets {
+        main.assets.srcDir(webOutput)
+        main.jniLibs.srcDir(jniOutput)
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.14.0'
+    implementation 'androidx.media3:media3-exoplayer:1.8.0'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.8.0'
+    implementation 'androidx.media3:media3-ui:1.8.0'
+}
+
+def buildWeb = tasks.register('buildStreambertWeb', Exec) {
+    workingDir repository
+    inputs.files(new File(repository, 'index.html'), new File(repository, 'vite.config.js'),
+        new File(repository, 'package.json'), new File(repository, 'package-lock.json'))
+    inputs.dir(new File(repository, 'src'))
+    inputs.dir(new File(repository, 'public'))
+    inputs.file(file('src/main/res/drawable-nodpi/enzi_movies.png'))
+    outputs.dir(webOutput)
+    environment 'STREAMBERT_ANDROID', '1'
+    commandLine 'node', 'node_modules/vite/bin/vite.js', 'build',
+        '--outDir', webOutput.get().asFile.absolutePath, '--emptyOutDir'
+}
+
+def buildRust = tasks.register('buildStreambertRust') {
+    inputs.files(fileTree(rustProject) { include 'Cargo.toml', 'Cargo.lock', 'src/**' })
+    inputs.property('abis', packageAbis)
+    outputs.dir(jniOutput)
+    doLast {
+        def prebuilt = new File(android.ndkDirectory, 'toolchains/llvm/prebuilt')
+        def host = windows ? 'windows-x86_64' : (osName.startsWith('mac') ? 'darwin-x86_64' : 'linux-x86_64')
+        def extension = windows ? '.exe' : ''
+        def clang = new File(prebuilt, "${host}/bin/clang${extension}")
+        def ar = new File(prebuilt, "${host}/bin/llvm-ar${extension}")
+        def targetDir = layout.buildDirectory.dir('cargo').get().asFile
+        project.exec {
+            workingDir rustProject
+            def command = ['cargo', 'build', '--locked', '--release', '--target-dir', targetDir.absolutePath]
+            packageAbis.each { abi ->
+                def (rustTarget, ndkTarget) = targetsByAbi[abi]
+                def targetKey = rustTarget.replace('-', '_')
+                def cargoKey = "CARGO_TARGET_${targetKey.toUpperCase(Locale.ROOT)}"
+                def clangTarget = ndkTarget + minimumApi
+                environment "${cargoKey}_LINKER", clang.absolutePath
+                environment "${cargoKey}_RUSTFLAGS", "-Clink-arg=--target=${clangTarget}"
+                environment "CC_${targetKey}", clang.absolutePath
+                environment "CFLAGS_${targetKey}", "--target=${clangTarget}"
+                environment "AR_${targetKey}", ar.absolutePath
+                command.addAll(['--target', rustTarget])
+            }
+            commandLine command
+        }
+        packageAbis.each { abi ->
+            def rustTarget = targetsByAbi[abi][0]
+            project.copy {
+                from new File(targetDir, "${rustTarget}/release/libstreambert_android.so")
+                into new File(jniOutput.get().asFile, abi)
+            }
+        }
+    }
+}
+
+tasks.named('preBuild').configure { dependsOn(buildWeb, buildRust) }
