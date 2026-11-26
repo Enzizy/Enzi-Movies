@@ -102,6 +102,7 @@ export default function MoviePage({
   const { t } = useTranslation();
   const [details, setDetails] = useState(null);
   const [playing, setPlaying] = useState(false);
+  const [playRequest, setPlayRequest] = useState(0);
   const [showDownload, setShowDownload] = useState(false);
   const [trailerKey, setTrailerKey] = useState(null);
   const [showTrailer, setShowTrailer] = useState(false);
@@ -725,6 +726,7 @@ export default function MoviePage({
     setM3u8Url(null);
     setInterceptedSubs([]);
     setPlaying(true);
+    if (isAndroid) setPlayRequest((request) => request + 1);
     onHistory({ ...d, media_type: "movie" });
   }, [d, onHistory]);
 
@@ -1124,7 +1126,7 @@ export default function MoviePage({
               </div>
             )}
             {isAndroid ? (
-              <AndroidPlayerButton url={playerDirectUrl} title={title}
+              <AndroidPlayerButton url={playerDirectUrl} title={title} playRequest={playRequest}
                 progressKey={progressKey} saveProgress={saveProgress} />
             ) : <webview
               ref={webviewRef}

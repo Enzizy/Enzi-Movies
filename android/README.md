@@ -1,10 +1,10 @@
 # Enzi Movies for Android
 
-Enzi Movies is the Android port of Streambert. It uses the upstream React catalog and library in Android WebView. A Rust JNI library handles TMDB requests and validates media links. The Android app uses Media3 for direct MP4 and HLS playback, Android's file picker for local videos, and DownloadManager for direct-file downloads. Compatible catalog providers open in a separate WebView without access to the app bridge.
+Enzi Movies is the Android port of Streambert. It uses the upstream React catalog and library in Android WebView. A Rust JNI library handles TMDB requests and validates media links. The Android app uses Media3 for direct MP4 and HLS playback, Android's file picker for local videos, and DownloadManager for direct-file downloads. Compatible providers supply embedded video and controls inside the fullscreen Enzi Movies player. The embedded player runs without access to the app bridge.
 
 Enter a TMDB Read Access Token to browse the catalog. You can also choose **Use media links or local videos** during setup and open a direct HTTPS link or a video on your device. The Android build supports Android 7.0 and newer on arm64-v8a, armeabi-v7a, and x86_64.
 
-To play a catalog movie, tap **Play** and then **Open player**. For a series, select an episode and tap **Open player**. The source menu is above the Android player button.
+Tap **Play** on a movie or select a series episode to start fullscreen playback. Use **Close player** or Android Back to return to the title. The title page lets you retry playback or choose another source.
 
 Android provider availability depends on each third-party site. This port omits HiAnime scraping, providers that rely on Electron request rewriting, HLS downloads, and desktop utilities such as Discord presence and the updater.
 

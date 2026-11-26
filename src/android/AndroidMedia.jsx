@@ -1,15 +1,19 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { PlayIcon } from "../components/Icons";
 import { storage } from "../utils/storage";
 import { androidRequest } from "./bridge";
 
-export function AndroidPlayerButton({ url, title, progressKey, saveProgress }) {
+export function AndroidPlayerButton({ url, title, progressKey, saveProgress, playRequest }) {
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState("");
+  const inFlight = useRef(false);
+  const handledRequest = useRef(0);
 
   useEffect(() => setError(""), [url]);
 
-  async function open() {
+  const open = useCallback(async () => {
+    if (!url || inFlight.current) return;
+    inFlight.current = true;
     setOpening(true);
     setError("");
     try {
@@ -22,14 +26,21 @@ export function AndroidPlayerButton({ url, title, progressKey, saveProgress }) {
     } catch (error) {
       setError(error.message);
     } finally {
+      inFlight.current = false;
       setOpening(false);
     }
-  }
+  }, [url, title, progressKey, saveProgress]);
+
+  useEffect(() => {
+    if (!url || playRequest === handledRequest.current) return;
+    handledRequest.current = playRequest;
+    void open();
+  }, [url, playRequest, open]);
 
   return (
     <div className="android-player-launch">
       <button className="android-primary" onClick={open} disabled={!url || opening}>
-        <PlayIcon /> {opening ? "Player open" : "Open player"}
+        <PlayIcon /> {opening ? "Playing" : "Play"}
       </button>
       {error && <p role="alert">{error}</p>}
     </div>

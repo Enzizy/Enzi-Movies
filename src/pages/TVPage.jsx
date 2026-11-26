@@ -441,6 +441,7 @@ export default function TVPage({
   );
   const [selectedEp, setSelectedEp] = useState(null);
   const [playing, setPlaying] = useState(false);
+  const [playRequest, setPlayRequest] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingSeason, setLoadingSeason] = useState(false);
   const [showDownload, setShowDownload] = useState(false);
@@ -1649,6 +1650,7 @@ export default function TVPage({
       setResolveError(null);
       setSelectedEp(ep);
       setPlaying(true);
+      if (isAndroid) setPlayRequest((request) => request + 1);
       onHistory({
         ...d,
         media_type: "tv",
@@ -2234,7 +2236,7 @@ export default function TVPage({
                   </div>
                 )}
                 {isAndroid ? (
-                  <AndroidPlayerButton url={playerDirectUrl} title={title}
+                  <AndroidPlayerButton url={playerDirectUrl} title={title} playRequest={playRequest}
                     progressKey={currentProgressKey} saveProgress={saveProgress} />
                 ) : <webview
                   ref={webviewRef}

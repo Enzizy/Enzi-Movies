@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -13,12 +12,16 @@ import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
+import android.widget.ImageButton;
 import android.widget.TextView;
 
 import androidx.annotation.OptIn;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
@@ -30,8 +33,7 @@ import androidx.media3.ui.PlayerView;
 
 @OptIn(markerClass = UnstableApi.class)
 public final class PlayerActivity extends Activity {
-    private FrameLayout frame;
-    private LinearLayout screen;
+    private FrameLayout videoSurface;
     private TextView message;
     private View fullScreen;
     private WebChromeClient.CustomViewCallback fullScreenCallback;
@@ -45,36 +47,41 @@ public final class PlayerActivity extends Activity {
     @Override
     public void onCreate(Bundle state) {
         super.onCreate(state);
-        getWindow().setStatusBarColor(Color.BLACK);
-        getWindow().setNavigationBarColor(Color.BLACK);
-        frame = new FrameLayout(this);
+        setTitle(getIntent().getStringExtra("title"));
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        FrameLayout frame = new FrameLayout(this);
         frame.setBackgroundColor(Color.BLACK);
-        screen = new LinearLayout(this);
-        screen.setOrientation(LinearLayout.VERTICAL);
-        frame.addView(screen, -1, -1);
-        if (Build.VERSION.SDK_INT >= 35) {
-            frame.setOnApplyWindowInsetsListener((view, insets) -> {
-                android.graphics.Insets bars = insets.getInsets(android.view.WindowInsets.Type.systemBars());
-                screen.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-                return insets;
-            });
-        }
-        LinearLayout bar = new LinearLayout(this);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        Button back = new Button(this);
-        back.setText("Back");
-        back.setOnClickListener(v -> finish());
-        bar.addView(back);
-        TextView title = new TextView(this);
-        title.setText(getIntent().getStringExtra("title"));
-        title.setTextSize(16);
-        title.setPadding(16, 0, 16, 0);
-        bar.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        screen.addView(bar);
+        videoSurface = new FrameLayout(this);
+        frame.addView(videoSurface, -1, -1);
+
         message = new TextView(this);
         message.setVisibility(View.GONE);
-        message.setPadding(24, 24, 24, 24);
-        screen.addView(message, -1, -2);
+        message.setGravity(Gravity.CENTER);
+        message.setTextColor(Color.WHITE);
+        message.setBackgroundColor(0xdd151515);
+        message.setPadding(dp(16), dp(12), dp(16), dp(12));
+        FrameLayout.LayoutParams alert = new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER);
+        alert.setMargins(dp(24), dp(24), dp(24), dp(24));
+        frame.addView(message, alert);
+
+        ImageButton close = new ImageButton(this);
+        close.setContentDescription(getString(R.string.close_player));
+        close.setImageResource(R.drawable.ic_close_player);
+        close.setBackgroundResource(R.drawable.player_close_background);
+        close.setOnClickListener(v -> finish());
+        FrameLayout.LayoutParams closeLayout =
+                new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.START);
+        closeLayout.topMargin = dp(12);
+        closeLayout.setMarginStart(dp(12));
+        frame.addView(close, closeLayout);
+        ViewCompat.setOnApplyWindowInsetsListener(frame, (view, insets) -> {
+            Insets safe = insets.getInsets(WindowInsetsCompat.Type.displayCutout());
+            boolean rtl = ViewCompat.getLayoutDirection(view) == ViewCompat.LAYOUT_DIRECTION_RTL;
+            closeLayout.topMargin = safe.top + dp(12);
+            closeLayout.setMarginStart((rtl ? safe.right : safe.left) + dp(12));
+            close.setLayoutParams(closeLayout);
+            return insets;
+        });
         setContentView(frame);
 
         Uri uri = getIntent().getData();
@@ -89,7 +96,23 @@ public final class PlayerActivity extends Activity {
         } else {
             playerView = new PlayerView(this);
             playerView.setKeepScreenOn(true);
-            screen.addView(playerView, new LinearLayout.LayoutParams(-1, 0, 1));
+            videoSurface.addView(playerView, -1, -1);
+        }
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            WindowInsetsControllerCompat controller =
+                    WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+            controller.setSystemBarsBehavior(
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            controller.hide(WindowInsetsCompat.Type.systemBars());
         }
     }
 
@@ -118,6 +141,7 @@ public final class PlayerActivity extends Activity {
     private void openWebPlayer(Uri uri) {
         web = new WebView(this);
         web.setBackgroundColor(Color.BLACK);
+        web.setKeepScreenOn(true);
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
         web.getSettings().setAllowContentAccess(false);
@@ -152,8 +176,8 @@ public final class PlayerActivity extends Activity {
                 }
                 fullScreen = view;
                 fullScreenCallback = callback;
-                screen.setVisibility(View.GONE);
-                frame.addView(view, -1, -1);
+                web.setVisibility(View.INVISIBLE);
+                videoSurface.addView(view, -1, -1);
             }
 
             @Override
@@ -161,7 +185,7 @@ public final class PlayerActivity extends Activity {
                 exitFullScreen();
             }
         });
-        screen.addView(web, new LinearLayout.LayoutParams(-1, 0, 1));
+        videoSurface.addView(web, -1, -1);
         web.loadUrl(uri.toString());
     }
 
@@ -172,9 +196,9 @@ public final class PlayerActivity extends Activity {
 
     private void exitFullScreen() {
         if (fullScreen == null) return;
-        frame.removeView(fullScreen);
+        videoSurface.removeView(fullScreen);
         fullScreen = null;
-        screen.setVisibility(View.VISIBLE);
+        web.setVisibility(View.VISIBLE);
         fullScreenCallback.onCustomViewHidden();
         fullScreenCallback = null;
     }
@@ -222,9 +246,7 @@ public final class PlayerActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (fullScreen != null) exitFullScreen();
-        else if (web != null && web.canGoBack()) web.goBack();
-        else finish();
+        finish();
     }
 
     @Override
@@ -238,7 +260,7 @@ public final class PlayerActivity extends Activity {
     protected void onDestroy() {
         exitFullScreen();
         if (web != null) {
-            screen.removeView(web);
+            videoSurface.removeView(web);
             web.destroy();
         }
         super.onDestroy();

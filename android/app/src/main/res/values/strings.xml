@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">Enzi Movies</string>
+    <string name="close_player">Close player</string>
     <string name="webview_update_required">Update Android System WebView to open Enzi Movies.</string>
 </resources>
