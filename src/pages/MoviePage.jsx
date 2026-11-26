@@ -170,10 +170,10 @@ export default function MoviePage({
   // Direct (non-async) player URL. Anime-capable sources (Vidnest) use their
   // anime route (AniList id + episode 1 + sub/dub) when AniList data exists;
   // otherwise the regular TMDB movie route is used.
-  const playerDirectUrl = useMemo(() => {
-    if (isAnime && sourceSupportsAnime(playerSource) && anilistData?.id) {
+  const getPlayerUrl = useCallback((source) => {
+    if (isAnime && sourceSupportsAnime(source) && anilistData?.id) {
       const animeUrl = getAnimeSourceUrl(
-        playerSource,
+        source,
         anilistData.id,
         1,
         dubMode,
@@ -181,9 +181,9 @@ export default function MoviePage({
       if (animeUrl) return animeUrl;
     }
     return getSourceUrl(
-      playerSource,
+      source,
       "movie",
-      srcId.id,
+      source === playerSource ? srcId.id : item.id,
       null,
       null,
       {},
@@ -196,9 +196,11 @@ export default function MoviePage({
     anilistData,
     dubMode,
     srcId.id,
+    item.id,
     playerAccentColor,
     playerSubLang,
   ]);
+  const playerDirectUrl = useMemo(() => getPlayerUrl(playerSource), [getPlayerUrl, playerSource]);
   const [downloaderFolder, setDownloaderFolder] = useState(
     () => storage.get("downloaderFolder") || "",
   );
@@ -1127,7 +1129,8 @@ export default function MoviePage({
             )}
             {isAndroid ? (
               <AndroidPlayerButton url={playerDirectUrl} title={title} playRequest={playRequest}
-                progressKey={progressKey} saveProgress={saveProgress} />
+                progressKey={progressKey} saveProgress={saveProgress} sourceId={playerSource}
+                getServerUrl={getPlayerUrl} onSourceChange={setPlayerSource} />
             ) : <webview
               ref={webviewRef}
               // A fresh guest per UA mode: loadURL's userAgent override sticks

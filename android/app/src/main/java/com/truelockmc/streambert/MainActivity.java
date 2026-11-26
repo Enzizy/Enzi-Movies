@@ -11,6 +11,9 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.view.View;
+import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -19,6 +22,11 @@ import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.webkit.JavaScriptReplyProxy;
 import androidx.webkit.WebViewAssetLoader;
 import androidx.webkit.WebViewCompat;
@@ -41,21 +49,20 @@ import java.util.concurrent.Executors;
 public final class MainActivity extends Activity {
     private static final String ORIGIN = "https://appassets.androidplatform.net";
     private static final int PICK_MEDIA = 1;
-    private static final int PLAY_MEDIA = 2;
 
     private final ExecutorService workers = Executors.newFixedThreadPool(4);
+    private FrameLayout root;
+    private FrameLayout catalog;
     private WebView web;
     private DownloadManager downloads;
     private SharedPreferences downloadRecords;
     private TokenStore tokens;
-    private Pending playback;
+    private PlaybackView playback;
+    private Pending playbackReply;
 
     @Override
     public void onCreate(Bundle state) {
         super.onCreate(state);
-        if (Build.VERSION.SDK_INT >= 35) {
-            getWindow().setDecorFitsSystemWindows(false);
-        }
         getWindow().setStatusBarColor(Color.BLACK);
         getWindow().setNavigationBarColor(Color.BLACK);
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
@@ -103,17 +110,24 @@ public final class MainActivity extends Activity {
                     if (!mainFrame || !ORIGIN.equals(source.toString()) || message.getData() == null) return;
                     receive(message.getData(), proxy);
                 });
-        FrameLayout root = new FrameLayout(this);
-        root.addView(web, -1, -1);
-        if (Build.VERSION.SDK_INT >= 35) {
-            root.setOnApplyWindowInsetsListener((view, insets) -> {
-                android.graphics.Insets bars = insets.getInsets(
-                        android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.ime()
-                );
-                view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-                return insets;
-            });
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            WindowManager.LayoutParams attributes = getWindow().getAttributes();
+            attributes.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            getWindow().setAttributes(attributes);
         }
+        root = new FrameLayout(this);
+        root.setBackgroundColor(Color.BLACK);
+        catalog = new FrameLayout(this);
+        catalog.addView(web, -1, -1);
+        root.addView(catalog, -1, -1);
+        ViewCompat.setOnApplyWindowInsetsListener(catalog, (view, insets) -> {
+            Insets safe = insets.getInsets(WindowInsetsCompat.Type.systemBars()
+                    | WindowInsetsCompat.Type.ime() | WindowInsetsCompat.Type.displayCutout());
+            view.setPadding(safe.left, safe.top, safe.right, safe.bottom);
+            return insets;
+        });
         setContentView(root);
         web.loadUrl(ORIGIN + "/app/index.html");
     }
@@ -149,8 +163,9 @@ public final class MainActivity extends Activity {
                     openExternal(Uri.parse(request.getString("url")));
                     break;
                 case "play":
-                    JSONObject media = NativeCore.invoke(mediaRequest(request.getString("url")));
-                    launchPlayer(Uri.parse(media.getString("url")), media.getString("kind"),
+                    PlaybackView.Source source = remoteSource(request.optString("sourceId"), "",
+                            request.getString("url"));
+                    launchPlayer(source, playbackServers(request.optJSONArray("servers")),
                             request.optString("title", getString(R.string.app_name)),
                             request.optDouble("start", 0), pending);
                     return;
@@ -171,8 +186,8 @@ public final class MainActivity extends Activity {
                     long id = downloadId(request);
                     Uri item = downloads.getUriForDownloadedFile(id);
                     if (item == null) throw new IllegalArgumentException("Download is unavailable");
-                    launchPlayer(item, "file", downloadRecords.getString(Long.toString(id), "Download"),
-                            0, pending);
+                    launchPlayer(new PlaybackView.Source(item, "file", "", ""), Collections.emptyList(),
+                            downloadRecords.getString(Long.toString(id), "Download"), 0, pending);
                     return;
                 case "removeDownload":
                     long removeId = downloadId(request);
@@ -209,15 +224,67 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void launchPlayer(Uri uri, String kind, String title, double start, Pending pending) {
+    private static PlaybackView.Source remoteSource(String id, String label, String url) throws JSONException {
+        JSONObject media = NativeCore.invoke(mediaRequest(url));
+        return new PlaybackView.Source(Uri.parse(media.getString("url")), media.getString("kind"), id, label);
+    }
+
+    private static List<PlaybackView.Source> playbackServers(JSONArray entries) {
+        if (entries == null) return Collections.emptyList();
+        List<PlaybackView.Source> servers = new ArrayList<>();
+        for (int index = 0; index < entries.length(); index++) {
+            try {
+                JSONObject entry = entries.getJSONObject(index);
+                servers.add(remoteSource(entry.getString("id"), entry.getString("label"), entry.getString("url")));
+            } catch (JSONException | IllegalArgumentException ignored) {
+                // An unavailable alternative must not block the selected server.
+            }
+        }
+        return servers;
+    }
+
+    private void launchPlayer(PlaybackView.Source source, List<PlaybackView.Source> servers,
+            String title, double start, Pending pending) {
         if (playback != null) throw new IllegalStateException("A player is already open");
-        Intent intent = new Intent(this, PlayerActivity.class).setData(uri)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                .putExtra("kind", kind)
-                .putExtra("title", title)
-                .putExtra("start", (long) (Math.max(0, start) * 1000));
-        startActivityForResult(intent, PLAY_MEDIA);
-        playback = pending;
+        playback = new PlaybackView(this, source, servers, title,
+                (long) (Math.max(0, start) * 1000), this::closePlayback);
+        playbackReply = pending;
+        InputMethodManager keyboard = getSystemService(InputMethodManager.class);
+        if (keyboard != null) keyboard.hideSoftInputFromWindow(web.getWindowToken(), 0);
+        catalog.setVisibility(View.INVISIBLE);
+        root.addView(playback, -1, -1);
+        ViewCompat.requestApplyInsets(playback);
+        hidePlayerBars();
+    }
+
+    private WindowInsetsControllerCompat windowInsetsController() {
+        return WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+    }
+
+    private void hidePlayerBars() {
+        WindowInsetsControllerCompat controller = windowInsetsController();
+        controller.setSystemBarsBehavior(
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        controller.hide(WindowInsetsCompat.Type.systemBars());
+    }
+
+    private void closePlayback() {
+        if (playback == null) return;
+        PlaybackView.Result result = playback.release();
+        root.removeView(playback);
+        playback = null;
+        catalog.setVisibility(View.VISIBLE);
+        windowInsetsController().show(WindowInsetsCompat.Type.systemBars());
+        Pending pending = playbackReply;
+        playbackReply = null;
+        try {
+            reply(pending, new JSONObject()
+                    .put("position", result.position())
+                    .put("duration", result.duration())
+                    .put("sourceId", result.sourceId()), null);
+        } catch (JSONException e) {
+            reply(pending, null, "Could not read playback progress");
+        }
     }
 
     private long enqueue(String url) throws JSONException {
@@ -291,25 +358,18 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
-        if (request == PICK_MEDIA && result == RESULT_OK && data != null && data.getData() != null) {
-            launchPlayer(data.getData(), "file", "Local video", 0, null);
-        } else if (request == PLAY_MEDIA) {
-            Pending pending = playback;
-            playback = null;
-            JSONObject progress = new JSONObject();
-            if (data != null) {
-                try {
-                    progress.put("position", data.getLongExtra("position", 0))
-                            .put("duration", data.getLongExtra("duration", 0));
-                } catch (JSONException ignored) {}
-            }
-            reply(pending, progress, null);
+        if (request == PICK_MEDIA && result == RESULT_OK && data != null
+                && data.getData() != null && playback == null) {
+            launchPlayer(new PlaybackView.Source(data.getData(), "file", "", ""),
+                    Collections.emptyList(), "Local video", 0, null);
         }
     }
 
     @Override
     public void onBackPressed() {
-        if (web == null) {
+        if (playback != null) {
+            closePlayback();
+        } else if (web == null) {
             super.onBackPressed();
         } else {
             web.evaluateJavascript("window.streambertBack?.() === true", handled -> {
@@ -319,8 +379,27 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && playback != null) hidePlayerBars();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (playback != null) playback.resume();
+    }
+
+    @Override
+    protected void onPause() {
+        if (playback != null) playback.pause();
+        super.onPause();
+    }
+
+    @Override
     protected void onDestroy() {
         workers.shutdownNow();
+        if (playback != null) playback.release();
         if (web != null) {
             ((android.view.ViewGroup) web.getParent()).removeView(web);
             web.destroy();

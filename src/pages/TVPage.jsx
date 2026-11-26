@@ -1018,8 +1018,8 @@ export default function TVPage({
   // Anime-capable sources (Vidnest) use their anime route: AniList id of the
   // selected season + episode number inside that entry + sub/dub.
   // Falls back to the regular TMDB route if no AniList data is available.
-  const playerDirectUrl = useMemo(() => {
-    if (isAnime && sourceSupportsAnime(playerSource)) {
+  const getPlayerUrl = useCallback((source) => {
+    if (isAnime && sourceSupportsAnime(source)) {
       // Wait for AniList data instead of loading the wrong (TMDB) route first
       if (anilistLoading) return null;
       const seasonEntry = anilistSeasons?.find(
@@ -1027,7 +1027,7 @@ export default function TVPage({
       );
       const anilistId = seasonEntry?.id ?? (anilistData?.id || null);
       const animeUrl = getAnimeSourceUrl(
-        playerSource,
+        source,
         anilistId,
         selectedEp?.episode_number,
         dubMode,
@@ -1035,9 +1035,9 @@ export default function TVPage({
       if (animeUrl) return animeUrl;
     }
     return getSourceUrl(
-      playerSource,
+      source,
       "tv",
-      srcId.id,
+      source === playerSource ? srcId.id : item.id,
       playerEp.season,
       playerEp.episode,
       {},
@@ -1054,10 +1054,12 @@ export default function TVPage({
     selectedEp,
     dubMode,
     srcId.id,
+    item.id,
     playerEp,
     playerAccentColor,
     playerSubLang,
   ]);
+  const playerDirectUrl = useMemo(() => getPlayerUrl(playerSource), [getPlayerUrl, playerSource]);
 
   // ── Memoized current season episodes ──────────────────────────────────────
   // While episode group or AniList data is still loading, return [] to prevent
@@ -2237,7 +2239,8 @@ export default function TVPage({
                 )}
                 {isAndroid ? (
                   <AndroidPlayerButton url={playerDirectUrl} title={title} playRequest={playRequest}
-                    progressKey={currentProgressKey} saveProgress={saveProgress} />
+                    progressKey={currentProgressKey} saveProgress={saveProgress} sourceId={playerSource}
+                    getServerUrl={getPlayerUrl} onSourceChange={setPlayerSource} />
                 ) : <webview
                   ref={webviewRef}
                   // A fresh guest per UA mode: loadURL's userAgent override sticks

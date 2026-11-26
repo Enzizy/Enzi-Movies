@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PlayIcon } from "../components/Icons";
-import { storage } from "../utils/storage";
+import { PLAYER_SOURCES } from "../utils/api";
+import { storage, STORAGE_KEYS } from "../utils/storage";
 import { androidRequest } from "./bridge";
 
-export function AndroidPlayerButton({ url, title, progressKey, saveProgress, playRequest }) {
+export function AndroidPlayerButton({
+  url, title, progressKey, saveProgress, playRequest, sourceId, getServerUrl, onSourceChange,
+}) {
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState("");
   const inFlight = useRef(false);
@@ -18,7 +21,15 @@ export function AndroidPlayerButton({ url, title, progressKey, saveProgress, pla
     setError("");
     try {
       const start = progressKey ? storage.get("dlTime_" + progressKey) || 0 : 0;
-      const result = await androidRequest("play", { url, title, start });
+      const servers = PLAYER_SOURCES.flatMap(({ id, label }) => {
+        const serverUrl = id === sourceId ? url : getServerUrl(id);
+        return serverUrl ? [{ id, label, url: serverUrl }] : [];
+      });
+      const result = await androidRequest("play", { url, title, start, sourceId, servers });
+      if (result?.sourceId !== sourceId && servers.some(({ id }) => id === result?.sourceId)) {
+        storage.set(STORAGE_KEYS.PLAYER_SOURCE, result.sourceId);
+        onSourceChange(result.sourceId);
+      }
       if (progressKey && result?.duration > 0) {
         storage.set("dlTime_" + progressKey, result.position / 1000);
         saveProgress?.(progressKey, Math.min(100, Math.round(100 * result.position / result.duration)));
@@ -29,7 +40,7 @@ export function AndroidPlayerButton({ url, title, progressKey, saveProgress, pla
       inFlight.current = false;
       setOpening(false);
     }
-  }, [url, title, progressKey, saveProgress]);
+  }, [url, title, progressKey, saveProgress, sourceId, getServerUrl, onSourceChange]);
 
   useEffect(() => {
     if (!url || playRequest === handledRequest.current) return;

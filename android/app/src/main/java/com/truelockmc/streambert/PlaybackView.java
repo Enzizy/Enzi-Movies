@@ -1,11 +1,10 @@
 package com.truelockmc.streambert;
 
-import android.app.Activity;
-import android.content.Intent;
+import android.content.Context;
 import android.graphics.Color;
 import android.net.Uri;
-import android.os.Bundle;
 import android.view.Gravity;
+import android.view.Menu;
 import android.view.View;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -13,15 +12,15 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+import android.widget.Button;
 import android.widget.ImageButton;
+import android.widget.PopupMenu;
 import android.widget.TextView;
 
 import androidx.annotation.OptIn;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
-import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
@@ -31,10 +30,18 @@ import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.PlayerView;
 
+import java.util.List;
+
 @OptIn(markerClass = UnstableApi.class)
-public final class PlayerActivity extends Activity {
-    private FrameLayout videoSurface;
-    private TextView message;
+final class PlaybackView extends FrameLayout {
+    record Source(Uri uri, String kind, String id, String label) {}
+    record Result(long position, long duration, String sourceId) {}
+
+    private final FrameLayout videoSurface;
+    private final TextView message;
+    private final List<Source> servers;
+    private Source source;
+    private PopupMenu serverMenu;
     private View fullScreen;
     private WebChromeClient.CustomViewCallback fullScreenCallback;
     private WebView web;
@@ -44,17 +51,17 @@ public final class PlayerActivity extends Activity {
     private long duration;
     private boolean playWhenReady = true;
 
-    @Override
-    public void onCreate(Bundle state) {
-        super.onCreate(state);
-        setTitle(getIntent().getStringExtra("title"));
-        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
-        FrameLayout frame = new FrameLayout(this);
-        frame.setBackgroundColor(Color.BLACK);
-        videoSurface = new FrameLayout(this);
-        frame.addView(videoSurface, -1, -1);
+    PlaybackView(Context context, Source source, List<Source> servers, String title, long start, Runnable onClose) {
+        super(context);
+        this.source = source;
+        this.servers = servers;
+        position = start;
+        setBackgroundColor(Color.BLACK);
+        ViewCompat.setAccessibilityPaneTitle(this, title);
+        videoSurface = new FrameLayout(context);
+        addView(videoSurface, -1, -1);
 
-        message = new TextView(this);
+        message = new TextView(context);
         message.setVisibility(View.GONE);
         message.setGravity(Gravity.CENTER);
         message.setTextColor(Color.WHITE);
@@ -62,41 +69,85 @@ public final class PlayerActivity extends Activity {
         message.setPadding(dp(16), dp(12), dp(16), dp(12));
         FrameLayout.LayoutParams alert = new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER);
         alert.setMargins(dp(24), dp(24), dp(24), dp(24));
-        frame.addView(message, alert);
+        addView(message, alert);
 
-        ImageButton close = new ImageButton(this);
-        close.setContentDescription(getString(R.string.close_player));
+        ImageButton close = new ImageButton(context);
+        close.setContentDescription(context.getString(R.string.close_player));
         close.setImageResource(R.drawable.ic_close_player);
         close.setBackgroundResource(R.drawable.player_close_background);
-        close.setOnClickListener(v -> finish());
+        close.setOnClickListener(v -> onClose.run());
         FrameLayout.LayoutParams closeLayout =
                 new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.START);
-        closeLayout.topMargin = dp(12);
-        closeLayout.setMarginStart(dp(12));
-        frame.addView(close, closeLayout);
-        ViewCompat.setOnApplyWindowInsetsListener(frame, (view, insets) -> {
+        setControlMargins(closeLayout, 0, 0, true);
+        addView(close, closeLayout);
+
+        Button serverButton = new Button(context);
+        FrameLayout.LayoutParams serverLayout =
+                new FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP | Gravity.END);
+        if (servers.size() > 1) {
+            serverButton.setText(R.string.player_servers);
+            serverButton.setAllCaps(false);
+            serverButton.setTextColor(Color.WHITE);
+            serverButton.setPadding(dp(16), 0, dp(16), 0);
+            serverButton.setBackgroundResource(R.drawable.player_server_background);
+            serverButton.setOnClickListener(this::showServers);
+            setControlMargins(serverLayout, 0, 0, false);
+            addView(serverButton, serverLayout);
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(this, (view, insets) -> {
             Insets safe = insets.getInsets(WindowInsetsCompat.Type.displayCutout());
             boolean rtl = ViewCompat.getLayoutDirection(view) == ViewCompat.LAYOUT_DIRECTION_RTL;
-            closeLayout.topMargin = safe.top + dp(12);
-            closeLayout.setMarginStart((rtl ? safe.right : safe.left) + dp(12));
+            setControlMargins(closeLayout, safe.top, rtl ? safe.right : safe.left, true);
             close.setLayoutParams(closeLayout);
+            if (serverButton.getParent() != null) {
+                setControlMargins(serverLayout, safe.top, rtl ? safe.left : safe.right, false);
+                serverButton.setLayoutParams(serverLayout);
+            }
             return insets;
         });
-        setContentView(frame);
+        openSource();
+    }
 
-        Uri uri = getIntent().getData();
-        if (uri == null) {
-            finish();
-            return;
+    private void setControlMargins(LayoutParams layout, int top, int side, boolean start) {
+        layout.topMargin = top + dp(12);
+        if (start) layout.setMarginStart(side + dp(12));
+        else layout.setMarginEnd(side + dp(12));
+    }
+
+    private void showServers(View anchor) {
+        PopupMenu menu = new PopupMenu(getContext(), anchor, Gravity.END);
+        serverMenu = menu;
+        for (int index = 0; index < servers.size(); index++) {
+            Source option = servers.get(index);
+            menu.getMenu().add(Menu.NONE, index + 1, index, option.label())
+                    .setCheckable(true)
+                    .setChecked(option.id().equals(source.id()));
         }
-        position = state == null ? getIntent().getLongExtra("start", 0) : state.getLong("position");
-        playWhenReady = state == null || state.getBoolean("playWhenReady", true);
-        if ("page".equals(getIntent().getStringExtra("kind"))) {
-            openWebPlayer(uri);
+        menu.setOnMenuItemClickListener(item -> {
+            Source selected = servers.get(item.getItemId() - 1);
+            if (!selected.id().equals(source.id())) {
+                releaseSurface();
+                source = selected;
+                position = 0;
+                duration = 0;
+                playWhenReady = true;
+                openSource();
+            }
+            return true;
+        });
+        menu.setOnDismissListener(popup -> serverMenu = null);
+        menu.show();
+    }
+
+    private void openSource() {
+        message.setVisibility(View.GONE);
+        if ("page".equals(source.kind())) {
+            openWebPlayer(source.uri());
         } else {
-            playerView = new PlayerView(this);
+            playerView = new PlayerView(getContext());
             playerView.setKeepScreenOn(true);
             videoSurface.addView(playerView, -1, -1);
+            startNativePlayer();
         }
     }
 
@@ -104,25 +155,11 @@ public final class PlayerActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    @Override
-    public void onWindowFocusChanged(boolean hasFocus) {
-        super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) {
-            WindowInsetsControllerCompat controller =
-                    WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
-            controller.setSystemBarsBehavior(
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-            controller.hide(WindowInsetsCompat.Type.systemBars());
-        }
-    }
-
-    @Override
-    protected void onStart() {
-        super.onStart();
-        if (playerView == null) return;
-        MediaItem.Builder item = new MediaItem.Builder().setUri(getIntent().getData());
-        if ("hls".equals(getIntent().getStringExtra("kind"))) item.setMimeType(MimeTypes.APPLICATION_M3U8);
-        player = new ExoPlayer.Builder(this)
+    private void startNativePlayer() {
+        if (playerView == null || player != null) return;
+        MediaItem.Builder item = new MediaItem.Builder().setUri(source.uri());
+        if ("hls".equals(source.kind())) item.setMimeType(MimeTypes.APPLICATION_M3U8);
+        player = new ExoPlayer.Builder(getContext())
                 .setAudioAttributes(AudioAttributes.DEFAULT, true)
                 .setHandleAudioBecomingNoisy(true)
                 .build();
@@ -139,7 +176,8 @@ public final class PlayerActivity extends Activity {
     }
 
     private void openWebPlayer(Uri uri) {
-        web = new WebView(this);
+        WebView provider = new WebView(getContext());
+        web = provider;
         web.setBackgroundColor(Color.BLACK);
         web.setKeepScreenOn(true);
         web.getSettings().setJavaScriptEnabled(true);
@@ -158,19 +196,21 @@ public final class PlayerActivity extends Activity {
 
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                if (request.isForMainFrame()) showMessage("This provider could not be opened.");
+                if (web == view && request.isForMainFrame()) showMessage("This provider could not be opened.");
             }
 
             @Override
             public void onReceivedHttpError(WebView view, WebResourceRequest request,
                     android.webkit.WebResourceResponse response) {
-                if (request.isForMainFrame()) showMessage("The provider returned HTTP " + response.getStatusCode() + ".");
+                if (web == view && request.isForMainFrame()) {
+                    showMessage("The provider returned HTTP " + response.getStatusCode() + ".");
+                }
             }
         });
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onShowCustomView(View view, CustomViewCallback callback) {
-                if (fullScreen != null) {
+                if (web != provider || fullScreen != null) {
                     callback.onCustomViewHidden();
                     return;
                 }
@@ -182,7 +222,7 @@ public final class PlayerActivity extends Activity {
 
             @Override
             public void onHideCustomView() {
-                exitFullScreen();
+                if (web == provider) exitFullScreen();
             }
         });
         videoSurface.addView(web, -1, -1);
@@ -199,8 +239,9 @@ public final class PlayerActivity extends Activity {
         videoSurface.removeView(fullScreen);
         fullScreen = null;
         web.setVisibility(View.VISIBLE);
-        fullScreenCallback.onCustomViewHidden();
+        WebChromeClient.CustomViewCallback callback = fullScreenCallback;
         fullScreenCallback = null;
+        callback.onCustomViewHidden();
     }
 
     private void capturePosition() {
@@ -210,59 +251,48 @@ public final class PlayerActivity extends Activity {
         playWhenReady = player.getPlayWhenReady();
     }
 
-    @Override
-    protected void onResume() {
-        super.onResume();
+    void resume() {
         if (web != null) web.onResume();
+        startNativePlayer();
     }
 
-    @Override
-    protected void onPause() {
+    void pause() {
+        if (serverMenu != null) serverMenu.dismiss();
         if (web != null) {
             web.evaluateJavascript("document.querySelectorAll('video,audio').forEach(e=>e.pause())", null);
             web.onPause();
         }
-        super.onPause();
+        stopNativePlayer();
     }
 
-    @Override
-    protected void onStop() {
+    private void stopNativePlayer() {
         if (player != null) {
             capturePosition();
             playerView.setPlayer(null);
             player.release();
             player = null;
         }
-        super.onStop();
     }
 
-    @Override
-    protected void onSaveInstanceState(Bundle state) {
-        capturePosition();
-        state.putLong("position", position);
-        state.putBoolean("playWhenReady", playWhenReady);
-        super.onSaveInstanceState(state);
+    Result release() {
+        if (serverMenu != null) serverMenu.dismiss();
+        releaseSurface();
+        return new Result(position, duration, source.id());
     }
 
-    @Override
-    public void onBackPressed() {
-        finish();
-    }
-
-    @Override
-    public void finish() {
-        capturePosition();
-        setResult(RESULT_OK, new Intent().putExtra("position", position).putExtra("duration", duration));
-        super.finish();
-    }
-
-    @Override
-    protected void onDestroy() {
+    private void releaseSurface() {
         exitFullScreen();
         if (web != null) {
-            videoSurface.removeView(web);
-            web.destroy();
+            WebView previous = web;
+            web = null;
+            previous.stopLoading();
+            videoSurface.removeView(previous);
+            previous.destroy();
         }
-        super.onDestroy();
+        stopNativePlayer();
+        if (playerView != null) {
+            videoSurface.removeView(playerView);
+            playerView = null;
+        }
     }
 }
